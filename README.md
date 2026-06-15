@@ -10,11 +10,10 @@ go get github.com/ptipd-uinsuska-riau/rag-sdk-go
 
 ## Autentikasi
 
-SDK menggunakan **Vendor App Token** dari sistem SDM:
+SDK mengirim header `X-App-Token` otomatis. Token **opsional**, tergantung konfigurasi RAG service:
 
-1. Admin SDM mendaftarkan aplikasi Anda sebagai vendor
-2. Admin memberikan **App Token**
-3. Token dikirim via header `X-App-Token` (SDK menangani otomatis)
+1. **Publik** (default, `APP_TOKENS=[]`) — `appToken` boleh dikosongkan.
+2. **Terbatas** — bila operator mengisi `APP_TOKENS`, isi `appToken` dengan token vendor dari admin.
 
 ## Penggunaan
 
