@@ -1,140 +1,56 @@
-# RAG SDK Go
+# rag-sdk-go — SDK Go untuk Chatbot RAG UIN Suska Riau
 
-SDK Go untuk integrasi AI Chatbot RAG Universitas.
+Klien Go untuk layanan [rag-be](../rag-be) (`/v1/chat`, `/v1/chat/stream`,
+feedback). Library — bukan service yang di-deploy.
+
+- Module: `github.com/ptipd-uinsuska-riau/rag-sdk-go` · Go **1.22+** · tag `v0.1.0`
 
 ## Instalasi
-
 ```bash
-go get github.com/ptipd-uinsuska-riau/rag-sdk-go
+go get github.com/ptipd-uinsuska-riau/rag-sdk-go@v0.1.0
 ```
 
-## Autentikasi
-
-SDK mengirim header `X-App-Token` otomatis. Token **opsional**, tergantung konfigurasi RAG service:
-
-1. **Publik** (default, `APP_TOKENS=[]`) — `appToken` boleh dikosongkan.
-2. **Terbatas** — bila operator mengisi `APP_TOKENS`, isi `appToken` dengan token vendor dari admin.
+## Konfigurasi
+Tidak ada file config. Parameter diberikan ke `NewClient`:
+- `ragBaseURL` — mis. `https://rag.uin-suska.ac.id/v1`
+- `appToken` — nilai `X-App-Token`. Boleh kosong bila `APP_TOKENS` di rag-be kosong (publik); **wajib** bila rag-be memproteksi endpoint.
+- Opsi: `WithLanguage("id"|"en")`, `WithTimeout(d)`, `WithHTTPClient(hc)`.
 
 ## Penggunaan
-
-### Chat Biasa
-
 ```go
-package main
-
 import (
     "context"
     "fmt"
     ragsdk "github.com/ptipd-uinsuska-riau/rag-sdk-go"
 )
 
-func main() {
-    client := ragsdk.NewClient(
-        "https://rag.universitas.ac.id/v1",
-        "your-app-token",
-    )
+client := ragsdk.NewClient("https://rag.uin-suska.ac.id/v1", "" /* appToken */)
 
-    resp, err := client.Chat(context.Background(), ragsdk.ChatRequest{
-        Message: "Bagaimana cara mendaftar mahasiswa baru?",
-    })
-    if err != nil {
-        panic(err)
-    }
-
-    fmt.Println("Jawaban:", resp.Answer)
-    for _, src := range resp.Sources {
-        fmt.Printf("Sumber: %s (%s)\n", src.Title, src.URL)
-    }
-}
-```
-
-### Streaming Chat
-
-```go
-err := client.ChatStream(ctx, ragsdk.ChatRequest{
-    Message:   "Info beasiswa",
-    SessionID: "session-123",
-}, &ragsdk.SimpleStreamHandler{
-    ChunkFn: func(text string) {
-        fmt.Print(text)
-    },
-    SourcesFn: func(sources []ragsdk.ChatSource) {
-        for _, s := range sources {
-            fmt.Printf("\nSumber: %s\n", s.Title)
-        }
-    },
-    DoneFn: func() {
-        fmt.Println("\n--- Selesai ---")
-    },
+// Non-streaming
+resp, err := client.Chat(context.Background(), ragsdk.ChatRequest{
+    Message: "Bagaimana cara mendaftar mahasiswa baru?",
 })
-```
+if err != nil { panic(err) }
+fmt.Println(resp.Answer)
 
-### Integrasi dengan Gin
-
-```go
-func chatHandler(c *gin.Context) {
-    var req struct {
-        Question string `json:"question"`
-        UnitID   string `json:"unit_id"`
-    }
-    c.BindJSON(&req)
-
-    client := ragsdk.NewClient(os.Getenv("RAG_URL"), os.Getenv("RAG_TOKEN"))
-
-    resp, err := client.Chat(c.Request.Context(), ragsdk.ChatRequest{
-        Message: req.Question,
-        UnitID:  req.UnitID,
-    })
-    if err != nil {
-        c.JSON(500, gin.H{"error": err.Error()})
-        return
-    }
-
-    c.JSON(200, resp)
-}
-```
-
-### Integrasi dengan Fiber
-
-```go
-app.Post("/api/chat", func(c *fiber.Ctx) error {
-    var body struct {
-        Question string `json:"question"`
-    }
-    c.BodyParser(&body)
-
-    client := ragsdk.NewClient(os.Getenv("RAG_URL"), os.Getenv("RAG_TOKEN"))
-
-    resp, err := client.Chat(c.Context(), ragsdk.ChatRequest{
-        Message: body.Question,
-    })
-    if err != nil {
-        return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-    }
-
-    return c.JSON(resp)
-})
-```
-
-## Opsi
-
-```go
-client := ragsdk.NewClient(url, token,
-    ragsdk.WithLanguage("en"),
-    ragsdk.WithTimeout(60 * time.Second),
-    ragsdk.WithHTTPClient(customClient),
+// Streaming (SSE)
+_ = client.ChatStream(context.Background(),
+    ragsdk.ChatRequest{Message: "Apa itu PPID?"},
+    &ragsdk.SimpleStreamHandler{
+        OnChunk: func(s string) { fmt.Print(s) },
+    },
 )
+
+// Feedback
+_ = client.Feedback(context.Background(), resp.MessageID, ragsdk.RatingHelpful, "")
 ```
 
-## Error Handling
+### API
+- `NewClient(ragBaseURL, appToken string, opts ...Option) *Client`
+- `(*Client) Chat(ctx, ChatRequest) (*ChatResponse, error)`
+- `(*Client) ChatStream(ctx, ChatRequest, StreamHandler) error`
+- `(*Client) Feedback(ctx, messageID string, rating Rating, comment string) error`
+- Tipe: `ChatRequest{Message, SessionID, UnitID, Language}`, `ChatResponse{Answer, SessionID, MessageID, Sources, Fallback, ...}`, `ChatSource`, `StreamHandler`/`SimpleStreamHandler`, `Rating` (`RatingHelpful`/`RatingNotHelpful`).
+- Error: `ErrUnauthorized`, `ErrRateLimited` (HTTP 429), `ErrServerError`.
 
-```go
-resp, err := client.Chat(ctx, req)
-if errors.Is(err, ragsdk.ErrUnauthorized) {
-    // Token tidak valid
-} else if errors.Is(err, ragsdk.ErrRateLimited) {
-    // Terlalu banyak request
-} else if errors.Is(err, ragsdk.ErrServerError) {
-    // Server error
-}
-```
+> Untuk percakapan multi-turn, simpan `resp.SessionID` lalu kirim balik di `ChatRequest.SessionID`. Hormati `ErrRateLimited` (rate limit rag-be: chat 30/menit/IP).
